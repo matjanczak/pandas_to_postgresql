@@ -337,20 +337,3 @@ class DBConnection():
 		# return result
 		result_dict = {'rows_inserted': inserted_rows, 'rows_updated': updated_rows}
 		return result_dict
-
-
-
-
-conn = DBConnection('energy', 'MateuszJanczak', '4r/]309Yv|2', 'localhost', 5432)
-conn = conn.set_default_schema('energy')
-
-
-to_insert = pd.DataFrame({'energy_system_name': ['PL', 'DE'],
-						  'country': ['Poland', 'Germany']})
-
-
-start_time = time.time()
-#print(conn.update_table(to_insert, 'energy_systems'))
-print(conn.insert_df(to_insert, 'energy_systems', keep_duplicates='first', update_duplicates=False))
-#print(conn.find_duplicates(to_insert,'energy_systems'))
-print(time.time()-start_time)

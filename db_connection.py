@@ -54,6 +54,8 @@ class DBConnection():
 					  'float64': ['numeric'], 'datetime64[ns]': ['date', 'timestamp(0) without time zone',\
 																 'timestamp(0) with time zone']}
 
+	type_codes = {bool: [16], }
+
 
 	def __init__(self, db_name, user_name, user_password, db_host, db_port):
 		self.db_name = db_name
@@ -214,7 +216,7 @@ class DBConnection():
 		duplicates = pd.DataFrame(duplicates, columns=df.columns)
 		return duplicates
 
-
+	#update sql table with given pd.DataFrame records
 	def update_table(self, df, table,  schema='', keep_duplicates=False):
 		schema = self.default_shema if schema == '' else schema
 		if keep_duplicates not in ('first', 'last', False):
@@ -264,7 +266,7 @@ class DBConnection():
 		result_dict = {'rows_updated': rows_updated}
 		return result_dict #sprawdzic tez zapytanie w sposob z: https://stackoverflow.com/questions/18797608/update-multiple-rows-in-same-query-using-postgresql
 
-
+	#insert or insert and update pd.DataFrame to given sql table
 	def insert_df(self, df, table, schema='', keep_duplicates=False, update_duplicates=False):
 		schema = self.default_shema if schema == '' else schema
 		if keep_duplicates not in ('first', 'last', False):
@@ -337,3 +339,31 @@ class DBConnection():
 		# return result
 		result_dict = {'rows_inserted': inserted_rows, 'rows_updated': updated_rows}
 		return result_dict
+
+	# read all data from given table to pd.DataFrame
+	def read_table(self, table, schema='', pk_as_index=False):
+		schema = self.default_shema if schema == '' else schema
+		self.schema_error_raiser(schema)
+		self.table_error_raiser(table)
+		# build and execute query
+		sql_query = """SELECT * FROM """+schema+"""."""+table+""";"""
+		self.cursor.execute(sql_query)
+		#get table description
+		table_description = self.cursor.description
+		result_table = self.cursor.fetchall()
+		result_table = pd.DataFrame(result_table)
+		result_table.columns = [i[0] for i in table_description]
+		#if True, set table primary keys as Data Frame indexes
+		if pk_as_index == True:
+			idx = self.get_table_pk(table, schema)
+			result_table.set_index(list(idx.keys()), inplace=True)
+		return result_table
+
+	# Execute given query and return pd.DataFrame
+	def read_table_from_query(self, sql_query):
+		self.cursor.execute(sql_query)
+		table_description = self.cursor.description
+		result_table = self.cursor.fetchall()
+		result_table = pd.DataFrame(result_table)
+		result_table.columns = [i[0] for i in table_description]
+		return result_table

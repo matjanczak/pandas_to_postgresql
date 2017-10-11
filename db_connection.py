@@ -178,10 +178,11 @@ class DBConnection():
 		self.df_error_raiser(df)
 		table_cols = self.get_table_columns(table, schema)
 		table_col_names = list(table_cols.keys())
-		for col in df.columns:
-			if table_cols[col] not in self.adapt_types_pd[str(df[col].dtype)]:
-				return False
 		result = set(df.columns).issubset(table_col_names)
+		if result:
+			for col in df.columns:
+				if table_cols[col] not in self.adapt_types_pd[str(df[col].dtype)]:
+					return False
 		return result
 
 	#check if there are duplicates in df and schema.table, considering primary key
@@ -351,7 +352,7 @@ class DBConnection():
 		#get table description
 		table_description = self.cursor.description
 		result_table = self.cursor.fetchall()
-		result_table = pd.DataFrame(result_table)
+		result_table = pd.DataFrame(result_table) # IF TABLE IS EMPTY, CREATE NEW WITH COLUMNS AS BELOW
 		result_table.columns = [i[0] for i in table_description]
 		#if True, set table primary keys as Data Frame indexes
 		if pk_as_index == True:

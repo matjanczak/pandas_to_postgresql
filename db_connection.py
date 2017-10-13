@@ -6,34 +6,6 @@ import time
 import decimal as dc
 import datetime as dt
 import numpy as np
-class InvalidSchemaTypeError(ValueError):
-	'''
-	Error to raise when schema type is not 'all',
-	'system', 'user_made', or if user wants to type
-	name of schema, that does not exists
-	'''
-	pass
-
-
-class InvalidSchemaError(ValueError):
-	'''
-	Error to raise when schema name given by user
-	is not name of real schema listed in db
-	'''
-	pass
-
-
-class InvalidTableNameError(ValueError):
-	'''
-	Error to raise when table name given by user
-	is not name of table listed in given schema
-	'''
-
-class UnevenColumnsError(Exception):
-	'''
-	Error to raise when parameters of two data frames,
-	one taken from db and second external are not matchet
-	'''
 
 
 class DBConnection():
@@ -43,19 +15,15 @@ class DBConnection():
 	   and easily operate on it's elements
 	   Author: Mateusz Janczak
 	'''
-	adapt_types = {bool: ['bool'], float: ['real', 'double'], int: ['smallint', 'integer', 'bigint'],
-				   dc.Decimal: ['numeric'], str: ['varchar(200)', 'text'], memoryview: ['bytea'],
-				   bytearray: ['bytea'], bytes: ['bytea'], dt.date: ['date'], np.datetime64: ['date', \
-				   'timestamp(0) without time zone', 'timestamp(0) with time zone'], #sprawdz np.datetime czy na pewno wszystkie
-				   dt.datetime: ['timestamp(0) without time zone', 'timestamp(0) with time zone'],
-				   dt.timedelta: ['interval'], list: ['ARRAY'], dict: ['hstore']}
+	__adapt_types_pd = {'object': ['varchar(200)', 'text'], 'int64': ['smallint', 'integer', 'bigint', 'numeric'],
+					  'int32': ['smallint', 'integer', 'bigint', 'numeric'],
+					  'float64': ['numeric'], 'datetime64[ns]': ['date', 'timestamp without time zone',\
+																 'timestamp with time zone']}
 
-	adapt_types_pd = {'object': ['varchar(200)', 'text'], 'int64': ['smallint', 'integer', 'bigint'],
-					  'float64': ['numeric'], 'datetime64[ns]': ['date', 'timestamp(0) without time zone',\
-																 'timestamp(0) with time zone']}
 
-	type_codes = {bool: [16], }
+	__type_codes = {bool: [16], }
 
+	__date_sql_to_pd = {'timestamp without time zone': '%Y-%m-%d %H:%M:%S', 'date': '%Y-%m-%d'}
 
 	def __init__(self, db_name, user_name, user_password, db_host, db_port):
 		self.db_name = db_name
@@ -63,7 +31,7 @@ class DBConnection():
 		self.user_password = user_password
 		self.db_host = db_host
 		self.db_port = db_port
-		self.default_shema = 'public'
+		self.__default_shema = 'public'
 
 		#connect to data base
 		try:
@@ -89,33 +57,33 @@ class DBConnection():
 							 where schema_name in ('information_schema', 'public')
 							 or schema_name like 'pg_%'"""
 		else:
-			raise InvalidSchemaTypeError(schema_type)
+			raise ValueError('Invalid schema type: '+ schema_type)
 		self.cursor.execute(sql_command)
 		schemas = self.cursor.fetchall()
 		schemas = tuple(map(lambda x: x[0], schemas))
 		return(schemas)
 
-	# function that checks if schema parameter is proper
-	def schema_error_raiser(self, schema):
-		if isinstance(schema, str)==False:
-			raise TypeError(schema)
-		if schema not in self.list_schemas():
-			raise InvalidSchemaError(schema)
+	# function that checks if schema_name parameter is proper
+	def __schema_error_raiser(self, schema_name):
+		if isinstance(schema_name, str)==False:
+			raise TypeError('schema_name should be an instance of str')
+		if schema_name not in self.list_schemas():
+			raise ValueError('Invalid schema_name: '+ schema_name)
 		else:
 			pass
 
 	# setting custom default schema, so you don't have to put it in each function
-	def set_default_schema(self, schema):
-		self.schema_error_raiser(schema)
-		self.default_shema=schema
+	def set_default_schema(self, schema_name):
+		self.__schema_error_raiser(schema_name)
+		self.__default_shema=schema_name
 		return self
 
-	# list tables of given schema
+	# list tables of given schema #moze zmienic na modle innych funkcji.
 	def list_tables(self, schema=''):
 		if schema == '':
 			sql_command = """SELECT table_name FROM information_schema.tables;"""
 		else:
-			self.schema_error_raiser(schema)
+			self.__schema_error_raiser(schema)
 			sql_command = """SELECT table_name FROM information_schema.tables
 		WHERE table_schema='"""+ schema + """';"""
 		self.cursor.execute(sql_command)
@@ -123,14 +91,25 @@ class DBConnection():
 		tables = tuple(map(lambda x: x[0], tables))
 		return(tables)
 
+	# function to check if 'table_name' parameter is proper
+	def __table_error_raiser(self, table_name):
+		if isinstance(table_name, str) == False:
+			raise TypeError('table_name should be an instance of str')
+		elif table_name not in self.list_tables():
+			raise ValueError('Invalid table_name: ' + table_name)
+		else:
+			pass
+
+
 	# get column name from given schema.table and data type that it contains. returns dictionary.
-	def get_table_columns(self, table, schema=''):
-		schema = self.default_shema if schema == '' else schema
-		self.schema_error_raiser(schema)
+	def get_table_columns(self, table_name, schema=''):
+		schema = self.__default_shema if schema == '' else schema
+		self.__schema_error_raiser(schema)
+		self.__table_error_raiser(table_name)
 		sql_command = """SELECT a.attname, format_type(a.atttypid, a.atttypmod) AS data_type
 		FROM   pg_index i JOIN   pg_attribute a ON a.attrelid = i.indrelid
 		AND a.attnum > 0
-		WHERE  i.indrelid = '""" + schema + """.""" + table + """'::regclass"""
+		WHERE  i.indrelid = '""" + schema + """.""" + table_name + """'::regclass"""
 		self.cursor.execute(sql_command)
 		result = self.cursor.fetchall()
 		keys = ["\"" + s[0] + "\"" if any(a.isupper() for a in s[0]) \
@@ -139,29 +118,23 @@ class DBConnection():
 		dct = dict(zip(keys, values))
 		return dct
 
-	# function to check if 'table' parameter is proper
-	def table_error_raiser(self, table):
-		if table not in self.list_tables():
-			raise InvalidTableNameError(table)
-		else:
-			pass
 
 	# function to check if '\df' parameter is proper
-	def df_error_raiser(self, df):
+	def __df_error_raiser(self, df):
 		if isinstance(df, pd.DataFrame)==False:
-			raise TypeError(df)
+			raise TypeError('df_name should be an instance of pandas.DataFrame')
 		else:
 			pass
 
 	# get schema.table primary key(s) name(s) and data type(s)
-	def get_table_pk(self, table, schema=''):
-		schema = self.default_shema if schema == '' else schema
-		self.schema_error_raiser(schema)
-		self.table_error_raiser(table)
+	def get_table_pk(self, table_name, schema_name=''):
+		schema_name = self.__default_shema if schema_name == '' else schema_name
+		self.__schema_error_raiser(schema_name)
+		self.__table_error_raiser(table_name)
 		sql_command = """SELECT a.attname, format_type(a.atttypid, a.atttypmod) AS data_type
 		FROM   pg_index i JOIN   pg_attribute a ON a.attrelid = i.indrelid 
 		AND a.attnum = ANY(i.indkey) 
-		WHERE  i.indrelid = '"""+schema+"""."""+table+"""'::regclass
+		WHERE  i.indrelid = '"""+schema_name+"""."""+table_name+"""'::regclass
 		AND    i.indisprimary;"""
 		self.cursor.execute(sql_command)
 		result = self.cursor.fetchall()
@@ -170,6 +143,53 @@ class DBConnection():
 		values = [s[1] for s in result]
 		dct = dict(zip(keys, values))
 		return dct
+
+	def __convert_types_sql_pd(self, tbl, cls): #funkcja do dokonczenia. obsluzyc wszystkie typy danych, jakie sie da
+		for col in tbl.columns:
+			d_type = cls[col]
+			if d_type not in self.__adapt_types_pd[str(tbl[col].dtype)]:
+				if d_type in list(self.__date_sql_to_pd.keys()):
+					tbl[col] = pd.to_datetime(tbl[col], format=self.__date_sql_to_pd[d_type])
+				elif d_type == 'numeric':
+					tbl[col] = pd.to_numeric(tbl[col], errors='coerce')
+		return tbl
+
+	# read all data from given table to pd.DataFrame
+	def read_table(self, table_name, schema_name='', pk_as_index=False):
+		schema_name = self.__default_shema if schema_name == '' else schema_name
+		self.__schema_error_raiser(schema_name) #
+		self.__table_error_raiser(table_name) # to i powyzsze sa powtorzone w get_table_columns, pomysl czy wywalic
+		table_columns = self.get_table_columns(table_name, schema_name)
+		# build and execute query
+		sql_query = """SELECT * FROM """+schema_name+"""."""+table_name+""";"""
+		self.cursor.execute(sql_query)
+		#get table description
+		table_description = self.cursor.description
+		result_table = self.cursor.fetchall()
+		result_table = pd.DataFrame(result_table)
+		result_table.columns = [i[0] for i in table_description]
+		# adapt sql result_table data types
+		result_table = self.__convert_types_sql_pd(result_table, table_columns)
+		#if True, set table primary keys as Data Frame indexes
+		if pk_as_index == True:
+			idx = self.get_table_pk(table_name, schema_name)
+			result_table.set_index(list(idx.keys()), inplace=True)
+		return result_table
+
+
+
+
+
+
+	# Execute given query and return pd.DataFrame
+	def read_table_from_query(self, sql_query):
+		self.cursor.execute(sql_query)
+		table_description = self.cursor.description
+		result_table = self.cursor.fetchall()
+		result_table = pd.DataFrame(result_table)
+		result_table.columns = [i[0] for i in table_description]
+		return result_table
+
 
 	#compare column names and data types of schema.table and given pd.DataFrame
 	def compare_cols(self, df, table, schema=''):
@@ -196,13 +216,14 @@ class DBConnection():
 		#get table primary keys
 		p_keys = self.get_table_pk(table, schema)
 		p_keys = list(p_keys.keys())
+		primary_keys = self.get_table_pk(table, schema)
 		#inf df leave only columns that are table's primary keys
 		df = df[p_keys]
 		df = df.copy()
 		#change data type to string if column containes dates
-		for col in df.columns:
-			if df[col].dtype in (dt.date, dt.datetime):
-				df[col] = df[col].astype(str)
+		for col, type in primary_keys.items():
+			if type in list(self.date_to_string.keys()):
+				df[col] = df[col].apply(lambda x: x.strftime(self.date_to_string[type]))
 		#built conditions for query
 		condition_sets = [str(tuple(df[col])) for col in df]
 		condition_sets = [c+ ' in ' +l for c,l in zip(p_keys, condition_sets)]
@@ -284,7 +305,6 @@ class DBConnection():
 		table_columns = self.get_table_columns(table, schema)
 		inserted_rows = 0
 		updated_rows = 0
-		# find duplicates in df, considering table primary keys
 		# if keep_uplicates == False and df contains any duplicates, then raise error. MOŻE ZMIENIC TO, ZEBY PO PROSTU WYWALALO DUPLIKATY
 		# else: drop duplicates from df
 		if keep_duplicates == False:
@@ -295,10 +315,15 @@ class DBConnection():
 			df.drop_duplicates(subset=p_keys, keep=keep_duplicates, inplace=True)
 		# find duplicates between df and table
 		pk_duplicates = self.find_duplicates(df,table,schema)
+		# find duplicates in df, considering table primary keys
 		#update table in case there are duplicates between df and table and update_duplicates==True
 		if (pk_duplicates.shape[0]!=0 and update_duplicates==True):
 			#get records to update
 			df_to_update = df.merge(pk_duplicates, how='right')
+			# change date formats to appropriate string format
+			for col, type in table_columns.items():
+				if type in list(self.date_to_string.keys()):
+					df_to_update[col] = df_to_update[col].apply(lambda x: x.strftime(self.date_to_string[type]))
 			cols = ", ".join([k + ' ' + table_columns[k] for k in df.columns])
 			#prepare other parameters to build update query
 			vals = [tuple(x) for x in df_to_update.to_records(index=False)]
@@ -320,6 +345,10 @@ class DBConnection():
 			self.connection.commit()
 			updated_rows = df_to_update.shape[0]
 		#prepare records to insert
+		# change date formats to appropriate string format
+		for col, type in table_columns.items():
+			if type in list(self.date_to_string.keys()):
+				df[col] = df[col].apply(lambda x: x.strftime(self.date_to_string[type]))
 		df_to_insert = (pd.merge(df, pk_duplicates, indicator=True, how='outer')
 			.query('_merge=="left_only"')
 			.drop('_merge', axis=1))
@@ -333,7 +362,7 @@ class DBConnection():
 			sql_query = """INSERT INTO """ + schema + """.""" + table + """ (""" + \
 			cols +""")
 			VALUES """+vals
-			#execute query
+			# execute query
 			self.cursor.execute(sql_query)
 			self.connection.commit()
 			inserted_rows = df_to_insert.shape[0]
@@ -341,30 +370,11 @@ class DBConnection():
 		result_dict = {'rows_inserted': inserted_rows, 'rows_updated': updated_rows}
 		return result_dict
 
-	# read all data from given table to pd.DataFrame
-	def read_table(self, table, schema='', pk_as_index=False):
-		schema = self.default_shema if schema == '' else schema
-		self.schema_error_raiser(schema)
-		self.table_error_raiser(table)
-		# build and execute query
-		sql_query = """SELECT * FROM """+schema+"""."""+table+""";"""
-		self.cursor.execute(sql_query)
-		#get table description
-		table_description = self.cursor.description
-		result_table = self.cursor.fetchall()
-		result_table = pd.DataFrame(result_table) # IF TABLE IS EMPTY, CREATE NEW WITH COLUMNS AS BELOW
-		result_table.columns = [i[0] for i in table_description]
-		#if True, set table primary keys as Data Frame indexes
-		if pk_as_index == True:
-			idx = self.get_table_pk(table, schema)
-			result_table.set_index(list(idx.keys()), inplace=True)
-		return result_table
 
-	# Execute given query and return pd.DataFrame
-	def read_table_from_query(self, sql_query):
-		self.cursor.execute(sql_query)
-		table_description = self.cursor.description
-		result_table = self.cursor.fetchall()
-		result_table = pd.DataFrame(result_table)
-		result_table.columns = [i[0] for i in table_description]
-		return result_table
+conn = DBConnection(db_name='energy', user_name='MateuszJanczak', user_password='4r/]309Yv|2',
+					db_host='localhost', db_port=5432)
+conn = conn.set_default_schema('energy')
+start_time = time.time()
+conn.read_table('weather')
+print(time.time()-start_time)
+

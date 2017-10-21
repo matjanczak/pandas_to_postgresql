@@ -6,6 +6,7 @@ import time
 import decimal as dc
 import datetime as dt
 import numpy as np
+import itertools
 
 
 class DBConnection():
@@ -15,13 +16,17 @@ class DBConnection():
 	   and easily operate on it's elements
 	   Author: Mateusz Janczak
 	'''
+
+	## POUSUWAC NIEPOTRZEBNE SLOWNIKI!!!!
+
 	__adapt_types_pd = {'object': ['varchar(200)', 'text'], 'int64': ['smallint', 'integer', 'bigint', 'numeric'],
 					  'int32': ['smallint', 'integer', 'bigint', 'numeric'],
 					  'float64': ['numeric'], 'datetime64[ns]': ['date', 'timestamp without time zone',\
 																 'timestamp with time zone']}
 
+	__type_codes = {16: 'bool', 23: 'int', 1700: 'float', 25: 'str', 701: 'float', 17: 'bytes'} # DOKONCZYC TYPE CODES i TYPE CODES DATE POZNIEJ. NA RAZIE STARCZY
 
-	__type_codes = {bool: [16], }
+	__type_codes_date = {1114: '%Y-%m-%d %H:%M:%S', 1184: None,  1082: '%Y-%m-%d'}
 
 	__date_sql_to_pd = {'timestamp without time zone': '%Y-%m-%d %H:%M:%S', 'date': '%Y-%m-%d'}
 
@@ -43,8 +48,10 @@ class DBConnection():
 		except:
 			pprint("Cannot connect to database")
 
+
 	#list db schemas
 	def list_schemas(self, schema_type=''):
+		"""List schemas stored in your db"""
 		if schema_type == '':
 			sql_command = """select schema_name from information_schema.schemata;"""
 
@@ -63,8 +70,10 @@ class DBConnection():
 		schemas = tuple(map(lambda x: x[0], schemas))
 		return(schemas)
 
+
 	# function that checks if schema_name parameter is proper
 	def __schema_error_raiser(self, schema_name):
+		"""check for errrors related to schema name and type."""
 		if isinstance(schema_name, str)==False:
 			raise TypeError('schema_name should be an instance of str')
 		if schema_name not in self.list_schemas():
@@ -72,14 +81,18 @@ class DBConnection():
 		else:
 			pass
 
+
 	# setting custom default schema, so you don't have to put it in each function
 	def set_default_schema(self, schema_name):
+		"""setting default schema you are going to use in your program."""
 		self.__schema_error_raiser(schema_name)
 		self.__default_shema=schema_name
 		return self
 
+
 	# list tables of given schema #moze zmienic na modle innych funkcji.
 	def list_tables(self, schema=''):
+		"""List tables stored in given schema or all database's schemas."""
 		if schema == '':
 			sql_command = """SELECT table_name FROM information_schema.tables;"""
 		else:
@@ -91,8 +104,10 @@ class DBConnection():
 		tables = tuple(map(lambda x: x[0], tables))
 		return(tables)
 
+
 	# function to check if 'table_name' parameter is proper
 	def __table_error_raiser(self, table_name):
+		"""Check for errors related to table name and type.."""
 		if isinstance(table_name, str) == False:
 			raise TypeError('table_name should be an instance of str')
 		elif table_name not in self.list_tables():
@@ -103,6 +118,7 @@ class DBConnection():
 
 	# get column name from given schema.table and data type that it contains. returns dictionary.
 	def get_table_columns(self, table_name, schema=''):
+		"""Get details of table columns - name and stored data type"""
 		schema = self.__default_shema if schema == '' else schema
 		self.__schema_error_raiser(schema)
 		self.__table_error_raiser(table_name)
@@ -121,13 +137,17 @@ class DBConnection():
 
 	# function to check if '\df' parameter is proper
 	def __df_error_raiser(self, df):
+		"""check for error related to pandas Data Frame used to
+		update/insert to data base"""
 		if isinstance(df, pd.DataFrame)==False:
 			raise TypeError('df_name should be an instance of pandas.DataFrame')
 		else:
 			pass
 
+
 	# get schema.table primary key(s) name(s) and data type(s)
 	def get_table_pk(self, table_name, schema_name=''):
+		"""Retrieve table's primary keys details"""
 		schema_name = self.__default_shema if schema_name == '' else schema_name
 		self.__schema_error_raiser(schema_name)
 		self.__table_error_raiser(table_name)
@@ -144,237 +164,259 @@ class DBConnection():
 		dct = dict(zip(keys, values))
 		return dct
 
-	def __convert_types_sql_pd(self, tbl, cls): #funkcja do dokonczenia. obsluzyc wszystkie typy danych, jakie sie da
-		for col in tbl.columns:
-			d_type = cls[col]
-			if d_type not in self.__adapt_types_pd[str(tbl[col].dtype)]:
-				if d_type in list(self.__date_sql_to_pd.keys()):
-					tbl[col] = pd.to_datetime(tbl[col], format=self.__date_sql_to_pd[d_type])
-				elif d_type == 'numeric':
-					tbl[col] = pd.to_numeric(tbl[col], errors='coerce')
+
+	#private function to convert types
+	def __convert_table_sql_pd(self,  cursor): #funkcja do dokonczenia. obsluzyc wszystkie typy danych, jakie sie da
+		"""Convert executed query to pandas DataFrame"""
+		tbl_description = cursor.description
+		tbl = cursor.fetchall()
+		tbl = pd.DataFrame(tbl)
+		types = [i[1] for i in tbl_description]
+		for n, col in enumerate(tbl.columns):
+			try:
+				tbl[col] = tbl[col].astype(self.__type_codes[types[n]])
+			except:
+				tbl[col] = pd.to_datetime(tbl[col], format=self.__type_codes_date[types[n]])
+		tbl.columns = [i[0] for i in tbl_description]
 		return tbl
+
 
 	# read all data from given table to pd.DataFrame
 	def read_table(self, table_name, schema_name='', pk_as_index=False):
+		"""read all data from table to pandas Data Frame"""
 		schema_name = self.__default_shema if schema_name == '' else schema_name
 		self.__schema_error_raiser(schema_name) #
 		self.__table_error_raiser(table_name) # to i powyzsze sa powtorzone w get_table_columns, pomysl czy wywalic
-		table_columns = self.get_table_columns(table_name, schema_name)
 		# build and execute query
 		sql_query = """SELECT * FROM """+schema_name+"""."""+table_name+""";"""
 		self.cursor.execute(sql_query)
 		#get table description
-		table_description = self.cursor.description
-		result_table = self.cursor.fetchall()
-		result_table = pd.DataFrame(result_table)
-		result_table.columns = [i[0] for i in table_description]
-		# adapt sql result_table data types
-		result_table = self.__convert_types_sql_pd(result_table, table_columns)
-		#if True, set table primary keys as Data Frame indexes
+		result = self.__convert_table_sql_pd(self.cursor)
 		if pk_as_index == True:
 			idx = self.get_table_pk(table_name, schema_name)
-			result_table.set_index(list(idx.keys()), inplace=True)
-		return result_table
-
-
-
-
+			result.set_index(list(idx.keys()), inplace=True)
+		return result
 
 
 	# Execute given query and return pd.DataFrame
 	def read_table_from_query(self, sql_query):
+		""" read table from custom query to pandas Data Frame"""
 		self.cursor.execute(sql_query)
-		table_description = self.cursor.description
-		result_table = self.cursor.fetchall()
-		result_table = pd.DataFrame(result_table)
-		result_table.columns = [i[0] for i in table_description]
-		return result_table
+		result = self.__convert_table_sql_pd(self.cursor)
+		return result
 
 
 	#compare column names and data types of schema.table and given pd.DataFrame
-	def compare_cols(self, df, table, schema=''):
-		schema = self.default_shema if schema == '' else schema
-		self.schema_error_raiser(schema)
-		self.df_error_raiser(df)
-		table_cols = self.get_table_columns(table, schema)
+	def compare_cols(self, df, table_name, schema_name=''):
+		"""Check if columns details of df are contained in details of columns of table"""
+		# check for errors
+		schema_name = self.__default_shema if schema_name == '' else schema_name
+		self.__schema_error_raiser(schema_name)
+		self.__df_error_raiser(df)
+		table_cols = self.get_table_columns(table_name, schema_name)
 		table_col_names = list(table_cols.keys())
-		result = set(df.columns).issubset(table_col_names)
-		if result:
+		table_pk = self.get_table_pk(table_name, schema_name)
+
+		# check primary keys compatibility
+		pk_name_condition = set(table_pk.keys()).issubset(df.columns)
+		if not pk_name_condition:
+			return "Compared Data Frame does not contain full set of table primary keys."
+		else:
+			pk_type_condition = [table_pk[k] in self.__adapt_types_pd[str(df[k].dtype)]
+								 for k in list(table_pk.keys())]
+			if not all(pk_type_condition):
+				return "There are diffrences between data types of primary keys in DataFrame and table."
+
+		# check column types and compatibility
+		if set(df.columns)==set(table_col_names):
+			result = True
+		elif set(df.columns).issubset(table_col_names):
+			result = "Columns of compared DataFrame and postgresql table are not fully equal." #JESLI ZMIENISZ TO, ZMIEN TEKST TAKZE W FUNKCJACH NIZEJ!!!
+		else:
+			result = False #i think this is not necessary
+
+		if result or result == "Columns of compared DataFrame and postgresql table are not fully equal.":
 			for col in df.columns:
-				if table_cols[col] not in self.adapt_types_pd[str(df[col].dtype)]:
-					return False
+				if table_cols[col] not in self.__adapt_types_pd[str(df[col].dtype)]:
+					return "there are diffrences between DataFrame and table data types stored in relevant columns."
 		return result
+
 
 	#check if there are duplicates in df and schema.table, considering primary key
 	def find_duplicates(self, df, table, schema=''):
-		schema = self.default_shema if schema == '' else schema
-		self.schema_error_raiser(schema)
-		self.table_error_raiser(table)
-		self.df_error_raiser(df)
-		if self.compare_cols(df, table, schema) == False:
-			raise UnevenColumnsError
-		#get table primary keys
+		"""find duplicates in primary keys of df comparing to table."""
+		schema = self.__default_shema if schema == '' else schema
+		self.__schema_error_raiser(schema)
+		self.__table_error_raiser(table)
+		self.__df_error_raiser(df)
+		acceptable_difference = "Columns of compared DataFrame and postgresql table are not fully equal."
+		comparison = self.compare_cols(df, table, schema)
+		if comparison is not True or comparison == acceptable_difference:
+			raise Exception(comparison)
+
+		#get table primary keys and erase columns in df that are not table primary keys
 		p_keys = self.get_table_pk(table, schema)
 		p_keys = list(p_keys.keys())
-		primary_keys = self.get_table_pk(table, schema)
-		#inf df leave only columns that are table's primary keys
 		df = df[p_keys]
-		df = df.copy()
-		#change data type to string if column containes dates
-		for col, type in primary_keys.items():
-			if type in list(self.date_to_string.keys()):
-				df[col] = df[col].apply(lambda x: x.strftime(self.date_to_string[type]))
-		#built conditions for query
-		condition_sets = [str(tuple(df[col])) for col in df]
-		condition_sets = [c+ ' in ' +l for c,l in zip(p_keys, condition_sets)]
-		condition_sets = " and ".join(condition_sets)
+
+		##built conditions for query
+		df_len = df.shape[0]
+		conditions_template ="""(%s)""" % ", ".join(["""%s"""] * df_len)
+		conditions_sets = [col + " in " + conditions_template for col in df.columns]
+		conditions_sets = ' and '.join(conditions_sets)
+		conditions = df.transpose().values.tolist()
+		conditions = tuple(itertools.chain.from_iterable(conditions))
+
 		#built query
 		sql_command = """SELECT """ + ", ".join(p_keys) + \
-					  """ FROM """+ schema + """.""" + table + """
-					  WHERE """ + condition_sets + """;"""
-		#execute query
-		self.cursor.execute(sql_command)
-		duplicates = self.cursor.fetchall()
-		duplicates = pd.DataFrame(duplicates, columns=df.columns)
-		return duplicates
+					  """ FROM """+ schema + """.""" + table + \
+					  """ WHERE """ + conditions_sets + """;"""
 
-	#update sql table with given pd.DataFrame records
+		#execute query
+		self.cursor.execute(sql_command, conditions)
+		result = self.__convert_table_sql_pd(self.cursor)
+		return result
+
+
+	#update sql table with given pd.DataFrame records ## ZASTANOWIC SIE CZY NIE ZMIENIC TAK, ZEBY WYSZUKIWALO KOLUMNY DO AKTUALIZACJI. ALE CHYBA NIE
 	def update_table(self, df, table,  schema='', keep_duplicates=False):
-		schema = self.default_shema if schema == '' else schema
-		if keep_duplicates not in ('first', 'last', False):
-			raise ValueError(keep_duplicates)
-		self.schema_error_raiser(schema)
-		self.table_error_raiser(table)
-		self.df_error_raiser(df)
-		if self.compare_cols(df, table, schema) == False:
-			raise UnevenColumnsError
-		#get primary keys
-		p_keys = self.get_table_pk(table, schema)
-		p_keys = list(p_keys.keys())
-		#get table columns details
-		table_columns = self.get_table_columns(table, schema)
-		# find duplicates in df, considering table primary keys
-		# if keep_uplicates == False and df contains any duplicates, then raise error. MOŻE ZMIENIC TO, ZEBY PO PROSTU WYWALALO DUPLIKATY
-		# else: drop duplicates from df
-		if keep_duplicates == False:
-			duplicates = df.duplicated(subset=p_keys, keep=keep_duplicates)
-			if any(duplicates):
-				raise ValueError("duplicate key found: {0}".format(df[p_keys][duplicates]))
-		else:
-			df.drop_duplicates(subset=p_keys, keep=keep_duplicates, inplace=True)
-		#find duplicates betweeen df and table
-		pk_to_update = self.find_duplicates(df,table,schema)
-		# prepare parameters to build query
-		cols = ", ".join([k + ' ' + table_columns[k] for k in df.columns])
-		df_to_update = df.merge(pk_to_update, how='left')
-		vals = [tuple(x) for x in df_to_update.to_records(index=False)]
-		vals = ", ".join(repr(e) for e in vals).replace(',)', ')')
-		pk_match = [table + "." + key + " = a."+key for key in p_keys]
-		pk_match = ", ".join(pk_match)
-		cols_to_update_match = [x for x in table_columns.keys() if x not in p_keys]
-		cols_to_update_match = [col + " = a."+col for col in cols_to_update_match]
-		cols_to_update_match = ", ".join(cols_to_update_match)
-		#build query
-		sql_query = """CREATE TEMP TABLE tmp(""" + cols + """);
-   		INSERT INTO tmp VALUES """+ vals +""";
-   		UPDATE """ + schema + """.""" + table + """
-   		SET """ +cols_to_update_match+ """
-   		FROM tmp a
-		WHERE """ + pk_match + """;"""
-		#execute query
-		self.cursor.execute(sql_query)
-		self.connection.commit()
-		rows_updated = df_to_update.shape[0]
-		result_dict = {'rows_updated': rows_updated}
-		return result_dict #sprawdzic tez zapytanie w sposob z: https://stackoverflow.com/questions/18797608/update-multiple-rows-in-same-query-using-postgresql
+		"""
+		Update table with values passed in pandas data frame.
+		"""
+		#set proper schema and check for errors
+		schema = self.__default_shema if schema == '' else schema
+		self.__schema_error_raiser(schema)
+		self.__table_error_raiser(table)
+		self.__df_error_raiser(df)
+		acceptable_difference = "Columns of compared DataFrame and postgresql table are not fully equal."
+		comparison = self.compare_cols(df, table, schema)
+		if comparison is not True or comparison == acceptable_difference:
+			raise Exception(comparison)
 
-	#insert or insert and update pd.DataFrame to given sql table
-	def insert_df(self, df, table, schema='', keep_duplicates=False, update_duplicates=False):
-		schema = self.default_shema if schema == '' else schema
-		if keep_duplicates not in ('first', 'last', False):
-			raise ValueError(keep_duplicates)
-		self.schema_error_raiser(schema)
-		self.table_error_raiser(table)
-		self.df_error_raiser(df)
-		if self.compare_cols(df, table, schema) == False:
-			raise UnevenColumnsError
-		#get primary keys
+		# get primary table keys
 		p_keys = self.get_table_pk(table, schema)
-		p_keys = list(p_keys.keys())
-		#get table columns details
+		p_keys_names = list(p_keys.keys())
+
+		# get table columns details and delete non-common columns with df
 		table_columns = self.get_table_columns(table, schema)
-		inserted_rows = 0
-		updated_rows = 0
-		# if keep_uplicates == False and df contains any duplicates, then raise error. MOŻE ZMIENIC TO, ZEBY PO PROSTU WYWALALO DUPLIKATY
-		# else: drop duplicates from df
-		if keep_duplicates == False:
-			duplicates = df.duplicated(subset=p_keys, keep=keep_duplicates)
+		table_columns = {k: v for k , v in table_columns.items()
+						 if k in df.columns}
+
+		# find duplicates in df, considering table primary keys. Raise duplicate error or drop duplitaces
+		if not keep_duplicates:
+			duplicates = df.duplicated(subset=p_keys_names, keep=keep_duplicates)
 			if any(duplicates):
-				raise ValueError("duplicate key found: {0}".format(df[p_keys][duplicates]))
+				raise ValueError("duplicate key found: {0}".format(df[p_keys_names][duplicates]))
 		else:
-			df.drop_duplicates(subset=p_keys, keep=keep_duplicates, inplace=True)
-		# find duplicates between df and table
-		pk_duplicates = self.find_duplicates(df,table,schema)
-		# find duplicates in df, considering table primary keys
-		#update table in case there are duplicates between df and table and update_duplicates==True
-		if (pk_duplicates.shape[0]!=0 and update_duplicates==True):
-			#get records to update
-			df_to_update = df.merge(pk_duplicates, how='right')
-			# change date formats to appropriate string format
-			for col, type in table_columns.items():
-				if type in list(self.date_to_string.keys()):
-					df_to_update[col] = df_to_update[col].apply(lambda x: x.strftime(self.date_to_string[type]))
-			cols = ", ".join([k + ' ' + table_columns[k] for k in df.columns])
-			#prepare other parameters to build update query
-			vals = [tuple(x) for x in df_to_update.to_records(index=False)]
-			vals = ", ".join(repr(e) for e in vals).replace(',)', ')')
-			pk_match = [table + "." + key + " = a." + key for key in p_keys]
-			pk_match = ", ".join(pk_match)
-			cols_to_update_match = [x for x in table_columns.keys() if x not in p_keys]
-			cols_to_update_match = [col + " = a." + col for col in cols_to_update_match]
-			cols_to_update_match = ", ".join(cols_to_update_match)
-			#build update query
-			sql_query_update = """CREATE TEMP TABLE tmp(""" + cols + """);
-			   		INSERT INTO tmp VALUES """ + vals + """;
-			   		UPDATE """ + schema + """.""" + table + """
-			   		SET """ + cols_to_update_match + """
-			   		FROM tmp a
-					WHERE """ + pk_match + """;"""
-			# execute query
-			self.cursor.execute(sql_query_update)
-			self.connection.commit()
-			updated_rows = df_to_update.shape[0]
-		#prepare records to insert
-		# change date formats to appropriate string format
-		for col, type in table_columns.items():
-			if type in list(self.date_to_string.keys()):
-				df[col] = df[col].apply(lambda x: x.strftime(self.date_to_string[type]))
-		df_to_insert = (pd.merge(df, pk_duplicates, indicator=True, how='outer')
-			.query('_merge=="left_only"')
-			.drop('_merge', axis=1))
-		#if there are records to insert - prepare all parameters and build query
-		if  df_to_insert.shape[0] != 0:
-			#prepare parameters
-			cols = ", ".join(df_to_insert.columns)
-			vals = [tuple(x) for x in df_to_insert.to_records(index=False)]
-			vals = ", ".join(repr(e) for e in vals).replace(',)', ')')
-			#build query
-			sql_query = """INSERT INTO """ + schema + """.""" + table + """ (""" + \
-			cols +""")
-			VALUES """+vals
-			# execute query
-			self.cursor.execute(sql_query)
-			self.connection.commit()
-			inserted_rows = df_to_insert.shape[0]
-		# return result
-		result_dict = {'rows_inserted': inserted_rows, 'rows_updated': updated_rows}
+			df.drop_duplicates(subset=p_keys_names, keep=keep_duplicates, inplace=True)
+
+		# find duplicates betweeen df and table and leave duplicates only.  NECESSARY??
+		pk_to_update = self.find_duplicates(df, table, schema)
+		df = pk_to_update.merge(df, how='left')
+
+		# prepare parameters to build sql query
+		tmp_table_cols = """(%s)""" % ", ".join([k + ' ' + v for k, v in table_columns.items()])
+		values_template = """(%s)""" % ", ".join(["""%s"""] * df.shape[1])
+		values_sets = ", ".join([values_template] * df.shape[0])
+		updated_cols_match = [x for x in table_columns.keys() if x not in p_keys_names]
+		updated_cols_match = ", ".join([x + " = a." + x for x in updated_cols_match])
+		pk_match = ", ".join([table + "." + key + " = a."+key for key in p_keys])
+
+		# build query and create values to insert
+		sql_query = """CREATE TEMP TABLE tmp%s; 
+		INSERT INTO tmp VALUES %s;
+		UPDATE %s.%s
+		SET %s 
+		FROM tmp a
+		WHERE %s;""" % (tmp_table_cols, values_sets, schema, table,
+					 updated_cols_match, pk_match)
+
+		# create values for tmp table to insert
+		values = df.values.tolist()
+		values = tuple(itertools.chain.from_iterable(values))
+
+		# execute query and return result
+		self.cursor.execute(sql_query, values)
+		self.connection.commit()
+		rows_updated = df.shape[0]
+		result_dict = {'rows_updated': rows_updated}
 		return result_dict
 
 
-conn = DBConnection(db_name='energy', user_name='MateuszJanczak', user_password='4r/]309Yv|2',
-					db_host='localhost', db_port=5432)
-conn = conn.set_default_schema('energy')
-start_time = time.time()
-conn.read_table('weather')
-print(time.time()-start_time)
+	#insert or insert and update pd.DataFrame to given sql table
+	def insert_df(self, df, table, schema='', df_drop_duplicates=True, df_keep_duplicates='first', update_duplicates=False):
+		"""
+		update table with values passed in pandas data frame.
+		if update_duplicates is False, function ignores
+		duplicates between df and table
+		"""
+		#set proper schema and check for errors
+		schema = self.__default_shema if schema == '' else schema
+		self.__schema_error_raiser(schema)
+		self.__table_error_raiser(table)
+		self.__df_error_raiser(df)
+		if not isinstance(df_drop_duplicates, bool):
+			raise TypeError('df_drop_duplicates has to be an instance of bool')
+		if not isinstance(update_duplicates, bool):
+			raise TypeError('update_duplicates has to be an instance of bool')
+		if df_keep_duplicates not in ('first', 'last', False):
+			raise ValueError('df_keep_duplicates value has to be \'first\', \'last\' or False')
+		comparison = self.compare_cols(df, table, schema)
+		if comparison is not True:
+			raise Exception(comparison)
 
+		#declare result variables
+		rows_updated = 0
+		rows_inserted = 0
+
+		# get primary table keys
+		p_keys = self.get_table_pk(table, schema)
+		p_keys_names = list(p_keys.keys())
+
+		# find duplicates in df, considering table primary keys. Raise duplicate error or drop duplitaces
+		duplicates = df.duplicated(subset=p_keys_names, keep=False)
+		if any(duplicates):
+			if df_drop_duplicates:
+				df.drop_duplicates(subset=p_keys_names, keep=df_keep_duplicates, inplace=True)
+			else:
+				raise ValueError("duplicate primary key(s) found: {0}".format(df[p_keys_names][duplicates]))
+
+		# find duplicates between df and table. Erase duplicates from data frame to insert
+		# and optionally update duplicated rows in table
+		pk_duplicates = self.find_duplicates(df, table, schema)
+		if pk_duplicates.shape[0] != 0:
+			df_to_update = pk_duplicates.merge(df, on=p_keys_names, how='left')
+			df_to_insert = pd.concat([df, df_to_update]) #try to find one-line solution
+			df_to_insert.drop_duplicates(keep=False, inplace=True)
+			if update_duplicates:
+				rows_updated = self.update_table(df_to_update,
+												  table, schema)['rows_updated']
+		else:
+			df_to_insert = df
+
+		#if df_to_insert is emptythen  return result
+		if df_to_insert.shape[0] == 0:
+			return {'rows_inserted': rows_inserted, 'rows_updated': rows_updated}
+
+		# prepare parameters to build sql query and sort df to match table columns position
+		table_columns = self.get_table_columns(table, schema)
+		df_to_insert = df_to_insert[list(table_columns.keys())]
+		table_columns = ", ".join(list(table_columns.keys()))
+		values_template = """(%s)""" % ", ".join(["""%s"""] * df_to_insert.shape[1])
+		values_template = ", ".join([values_template] * df_to_insert.shape[0])
+
+		#build query
+		sql_query = """INSERT INTO %s.%s (%s) VALUES %s;""" %(schema, table,
+																   table_columns,
+																   values_template)
+
+		# create values for query to insert
+		values = df_to_insert.values.tolist() # ZROBIC Z TEGO FUNKCJE MOZE
+		values = tuple(itertools.chain.from_iterable(values))
+
+		# execute query and return result
+		self.cursor.execute(sql_query, values)
+		self.connection.commit()
+		rows_inserted = df_to_insert.shape[0]
+		result = {'rows_inserted': rows_inserted, 'rows_updated': rows_updated}
+		return result

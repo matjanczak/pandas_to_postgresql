@@ -274,7 +274,10 @@ class DBConnection():
 
 		#execute query
 		self.cursor.execute(sql_command, conditions)
-		result = self.__convert_table_sql_pd(self.cursor)
+		try:
+			result = self.__convert_table_sql_pd(self.cursor)
+		except:
+			result = pd.DataFrame()
 		return result
 
 

@@ -366,7 +366,7 @@ class DBConnection():
 	#insert or insert and update pd.DataFrame to given sql table
 	def insert_df(self, df, table, schema='', df_drop_duplicates=True, df_keep_duplicates='first', update_duplicates=False):
 		"""
-		update table with values passed in pandas data frame.
+		insert data frame rows to table
 		if update_duplicates is False, function ignores
 		duplicates between df and table
 		"""
@@ -422,7 +422,6 @@ class DBConnection():
 		table_columns = self.get_table_columns(table, schema)
 		df_to_insert = df_to_insert[list(table_columns.keys())]
 		table_columns = ", ".join(list(table_columns.keys()))
-		print(table_columns)
 		values_template = """(%s)""" % ", ".join(["""%s"""] * df_to_insert.shape[1])
 		values_template = ", ".join([values_template] * df_to_insert.shape[0])
 
@@ -440,4 +439,60 @@ class DBConnection():
 		self.connection.commit()
 		rows_inserted = df_to_insert.shape[0]
 		result = {'rows_inserted': rows_inserted, 'rows_updated': rows_updated}
+		return result
+
+
+	# BELOW FUNCTION WASN'T CHECKED YET!!!! MAY CAUSE ERRORS!
+	#insert df to table with automatically incremented primary key
+	def insert_table_auto_pk(self, df, table, pk_name, schema=''):
+		"""
+		insert rows to table with automatically incremented primary key.
+		in first version of this function there can be only one primary key.
+		:param df: pandas.DataFrame to insert
+		:param table: name of table in data base schema to insert data to
+		:param schema: schema where table is placed
+		:return: dictionary containing info about number of inserted rows
+		"""
+		# set proper schema and check for errors
+		schema = self.__default_shema if schema == '' else schema
+		self.__schema_error_raiser(schema)
+		self.__table_error_raiser(table)
+		self.__df_error_raiser(df)
+		table_columns = self.get_table_columns(table, schema)
+		if isinstance(pk_name, str):
+			if pk_name in table_columns.keys():
+				pk_name.pop(pk_name, None)
+			else:
+				return ValueError("No column named %s in %s table" % (pk_name, table))
+
+		# check if sets of columns are equal
+		table_col_names = list(table_columns.keys())
+		if set(df.columns)!=set(table_col_names):
+			return Exception("Sets of columns in df and table are not equal")
+
+		# check if data types of equivalent columns are equal:
+		for col in df.columns:
+			if table_columns[col] not in self.__adapt_types_pd[str(df[col].dtype)]:
+				return Exception("there are diffrences between DataFrame and table data types stored in relevant columns.")
+
+		# prepare parameters to build sql query and sort df to match table columns position
+		df_to_insert = df[table_col_names]
+		table_columns = ", ".join(table_col_names)
+		values_template = """(%s)""" % ", ".join(["""%s"""] * df_to_insert.shape[1])
+		values_template = ", ".join([values_template] * df_to_insert.shape[0])
+
+		# build query
+		sql_query = """INSERT INTO %s.%s (%s) VALUES %s;""" % (schema, table,
+															   table_columns,
+															   values_template)
+
+		# create values for query to insert
+		values = df_to_insert.values.tolist()
+		values = tuple(itertools.chain.from_iterable(values))
+		values = [None if pd.isnull(x) else x for x in values]
+		# execute query and return result
+		self.cursor.execute(sql_query, values)
+		self.connection.commit()
+		rows_inserted = df_to_insert.shape[0]
+		result = {'rows_inserted': rows_inserted, 'rows_updated': 0}
 		return result

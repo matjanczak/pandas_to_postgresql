@@ -248,6 +248,7 @@ class DBConnection():
 
 
 	#check if there are duplicates in df and schema.table, considering primary key
+	#try to find faster code. but it isnt bad
 	def find_duplicates(self, df, table, schema=''):
 		"""find duplicates in primary keys of df comparing to table."""
 		schema = self.__default_shema if schema == '' else schema
@@ -281,29 +282,19 @@ class DBConnection():
 			val = df[i]
 			val = [None if pd.isnull(x) else x for x in val]
 			values = values + val
-
 		values = [int(v) if isinstance(v, np.int64) else v for v in values]
-		#if df.shape[1]==1:
-		#	values = df[df.columns[0]]
-		#	values = [None if pd.isnull(x) else x for x in values]
-		#else:
-		#	values = df.values.tolist()
-		#	print(values)
-		#	values = tuple(itertools.chain.from_iterable(values))		## TE FUNKCJE TRZEBA DOKONCZYC
-		#	print(values)
-		#	values = [None if pd.isnull(x) else x for x in values]
 
 		#execute query
 		self.cursor.execute(sql_command, values)
 		try:
-			result = self.__convert_table_sql_pd(self.cursor)
+			tbl_duplicates = self.__convert_table_sql_pd(self.cursor)
+			result = pd.merge(df, tbl_duplicates, how='inner', on=p_keys)
 		except:
 			result = pd.DataFrame()
 		return result
 
 
-	# WYSTAPIL JAKIS PROBLEM Z TA FUNKCJA, ZLE PRZYPISUJE PARAMETRY!! SPRAWDZIC
-	#update sql table with given pd.DataFrame records ## ZASTANOWIC SIE CZY NIE ZMIENIC TAK, ZEBY WYSZUKIWALO KOLUMNY DO AKTUALIZACJI. ALE CHYBA NIE
+	#update sql table with given pd.DataFrame records
 	def update_table(self, df, table,  schema='', keep_duplicates=False):
 		"""
 		Update table with values passed in pandas data frame.

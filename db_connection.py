@@ -20,7 +20,7 @@ class DBConnection():
 	## POUSUWAC NIEPOTRZEBNE SLOWNIKI!!!!
 
 	__adapt_types_pd = {'object': ['varchar(200)', 'text'], 'int64': ['smallint', 'integer', 'bigint', 'numeric'],
-					  'int32': ['smallint', 'integer', 'bigint', 'numeric'],
+					  'int32': ['smallint', 'integer', 'bigint', 'numeric'], 'bool': ['boolean'], 'boolean': ['boolean'],
 					  'float64': ['numeric'], 'datetime64[ns]': ['date', 'timestamp without time zone',\
 																 'timestamp with time zone']}
 
@@ -117,7 +117,7 @@ class DBConnection():
 
 
 	# get column name from given schema.table and data type that it contains. returns dictionary.
-	def get_table_columns(self, table_name, schema=''):
+	def get_table_columns(self, table_name, schema='', dropped=False):
 		"""Get details of table columns - name and stored data type"""
 		schema = self.__default_shema if schema == '' else schema
 		self.__schema_error_raiser(schema)
@@ -132,6 +132,11 @@ class DBConnection():
 					 else s[0] for s in result]
 		values = [s[1] for s in result]
 		dct = dict(zip(keys, values))
+		if dropped is not True:
+			k = "........pg.dropped.3........" # TO ZMIENIC ZEBY NIE BYLO SZTYWNE, TYLKO WYWALALO WSZYSTKIE POZOSTALOSCI USUNIETYCH KOLUMN
+			if k in dct:
+				del dct[k]
+
 		return dct
 
 
@@ -261,19 +266,35 @@ class DBConnection():
 
 		##built conditions for query
 		df_len = df.shape[0]
+		table_cols = ", ".join(p_keys)
 		conditions_template ="""(%s)""" % ", ".join(["""%s"""] * df_len)
 		conditions_sets = [col + " in " + conditions_template for col in df.columns]
 		conditions_sets = ' and '.join(conditions_sets)
-		conditions = df.transpose().values.tolist()
-		conditions = tuple(itertools.chain.from_iterable(conditions))
 
 		#built query
-		sql_command = """SELECT """ + ", ".join(p_keys) + \
-					  """ FROM """+ schema + """.""" + table + \
-					  """ WHERE """ + conditions_sets + """;"""
+		sql_command = """SELECT %s FROM %s.%s WHERE %s""" % (table_cols, schema, table, conditions_sets)
+
+		# create values for tmp table to insert. Change NaN values to None in order to
+		# properly insert NULL values
+		values = list()
+		for i in df.columns:
+			val = df[i]
+			val = [None if pd.isnull(x) else x for x in val]
+			values = values + val
+
+		values = [int(v) if isinstance(v, np.int64) else v for v in values]
+		#if df.shape[1]==1:
+		#	values = df[df.columns[0]]
+		#	values = [None if pd.isnull(x) else x for x in values]
+		#else:
+		#	values = df.values.tolist()
+		#	print(values)
+		#	values = tuple(itertools.chain.from_iterable(values))		## TE FUNKCJE TRZEBA DOKONCZYC
+		#	print(values)
+		#	values = [None if pd.isnull(x) else x for x in values]
 
 		#execute query
-		self.cursor.execute(sql_command, conditions)
+		self.cursor.execute(sql_command, values)
 		try:
 			result = self.__convert_table_sql_pd(self.cursor)
 		except:
@@ -281,6 +302,7 @@ class DBConnection():
 		return result
 
 
+	# WYSTAPIL JAKIS PROBLEM Z TA FUNKCJA, ZLE PRZYPISUJE PARAMETRY!! SPRAWDZIC
 	#update sql table with given pd.DataFrame records ## ZASTANOWIC SIE CZY NIE ZMIENIC TAK, ZEBY WYSZUKIWALO KOLUMNY DO AKTUALIZACJI. ALE CHYBA NIE
 	def update_table(self, df, table,  schema='', keep_duplicates=False):
 		"""
@@ -316,14 +338,16 @@ class DBConnection():
 		# find duplicates betweeen df and table and leave duplicates only.  NECESSARY??
 		pk_to_update = self.find_duplicates(df, table, schema)
 		df = pk_to_update.merge(df, how='left')
+		df = df[list(table_columns.keys())]
 
 		# prepare parameters to build sql query
 		tmp_table_cols = """(%s)""" % ", ".join([k + ' ' + v for k, v in table_columns.items()])
 		values_template = """(%s)""" % ", ".join(["""%s"""] * df.shape[1])
 		values_sets = ", ".join([values_template] * df.shape[0])
 		updated_cols_match = [x for x in table_columns.keys() if x not in p_keys_names]
+		#updated_cols_match = [x for x in df.columns if x not in p_keys_names]
 		updated_cols_match = ", ".join([x + " = a." + x for x in updated_cols_match])
-		pk_match = ", ".join([table + "." + key + " = a."+key for key in p_keys])
+		pk_match = " and ".join([table + "." + key + " = a."+key for key in p_keys])
 
 		# build query and create values to insert
 		sql_query = """CREATE TEMP TABLE tmp%s; 
@@ -334,9 +358,11 @@ class DBConnection():
 		WHERE %s;""" % (tmp_table_cols, values_sets, schema, table,
 					 updated_cols_match, pk_match)
 
-		# create values for tmp table to insert
+		# create values for tmp table to insert. Change NaN values to None in order to
+		# properly insert NULL values
 		values = df.values.tolist()
 		values = tuple(itertools.chain.from_iterable(values))
+		values = [None if pd.isnull(x) else x for x in values]
 
 		# execute query and return result
 		self.cursor.execute(sql_query, values)
@@ -405,6 +431,7 @@ class DBConnection():
 		table_columns = self.get_table_columns(table, schema)
 		df_to_insert = df_to_insert[list(table_columns.keys())]
 		table_columns = ", ".join(list(table_columns.keys()))
+		print(table_columns)
 		values_template = """(%s)""" % ", ".join(["""%s"""] * df_to_insert.shape[1])
 		values_template = ", ".join([values_template] * df_to_insert.shape[0])
 
@@ -416,7 +443,7 @@ class DBConnection():
 		# create values for query to insert
 		values = df_to_insert.values.tolist() # ZROBIC Z TEGO FUNKCJE MOZE
 		values = tuple(itertools.chain.from_iterable(values))
-
+		values = [None if pd.isnull(x) else x for x in values]
 		# execute query and return result
 		self.cursor.execute(sql_query, values)
 		self.connection.commit()

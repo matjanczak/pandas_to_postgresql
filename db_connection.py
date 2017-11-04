@@ -1,4 +1,3 @@
-#w wolnej chwili sprobowac przesztalcic kod w bloki try/except
 import psycopg2 as p
 from pprint import pprint
 import pandas as pd
@@ -17,14 +16,12 @@ class DBConnection():
 	   Author: Mateusz Janczak
 	'''
 
-	## POUSUWAC NIEPOTRZEBNE SLOWNIKI!!!!
-
 	__adapt_types_pd = {'object': ['varchar(200)', 'text'], 'int64': ['smallint', 'integer', 'bigint', 'numeric'],
 					  'int32': ['smallint', 'integer', 'bigint', 'numeric'], 'bool': ['boolean'], 'boolean': ['boolean'],
 					  'float64': ['numeric'], 'datetime64[ns]': ['date', 'timestamp without time zone',\
 																 'timestamp with time zone']}
 
-	__type_codes = {16: 'bool', 23: 'int', 1700: 'float', 25: 'str', 701: 'float', 17: 'bytes'} # DOKONCZYC TYPE CODES i TYPE CODES DATE POZNIEJ. NA RAZIE STARCZY
+	__type_codes = {16: 'bool', 23: 'int', 1700: 'float', 25: 'str', 701: 'float', 17: 'bytes'}
 
 	__type_codes_date = {1114: '%Y-%m-%d %H:%M:%S', 1184: None,  1082: '%Y-%m-%d'}
 
@@ -133,14 +130,14 @@ class DBConnection():
 		values = [s[1] for s in result]
 		dct = dict(zip(keys, values))
 		if dropped is not True:
-			k = "........pg.dropped.3........" # TO ZMIENIC ZEBY NIE BYLO SZTYWNE, TYLKO WYWALALO WSZYSTKIE POZOSTALOSCI USUNIETYCH KOLUMN
+			k = "........pg.dropped.3........" # TEMPORARY SOLUTION, GOT TO CHANGE IT
 			if k in dct:
 				del dct[k]
 
 		return dct
 
 
-	# function to check if '\df' parameter is proper
+	# function to check if 'df' parameter is proper
 	def __df_error_raiser(self, df):
 		"""check for error related to pandas Data Frame used to
 		update/insert to data base"""
@@ -171,7 +168,7 @@ class DBConnection():
 
 
 	#private function to convert types
-	def __convert_table_sql_pd(self,  cursor): #funkcja do dokonczenia. obsluzyc wszystkie typy danych, jakie sie da
+	def __convert_table_sql_pd(self,  cursor):
 		"""Convert executed query to pandas DataFrame"""
 		tbl_description = cursor.description
 		tbl = cursor.fetchall()
@@ -191,7 +188,7 @@ class DBConnection():
 		"""read all data from table to pandas Data Frame"""
 		schema_name = self.__default_shema if schema_name == '' else schema_name
 		self.__schema_error_raiser(schema_name) #
-		self.__table_error_raiser(table_name) # to i powyzsze sa powtorzone w get_table_columns, pomysl czy wywalic
+		self.__table_error_raiser(table_name) #
 		# build and execute query
 		sql_query = """SELECT * FROM """+schema_name+"""."""+table_name+""";"""
 		self.cursor.execute(sql_query)
@@ -236,7 +233,7 @@ class DBConnection():
 		if set(df.columns)==set(table_col_names):
 			result = True
 		elif set(df.columns).issubset(table_col_names):
-			result = "Columns of compared DataFrame and postgresql table are not fully equal." #JESLI ZMIENISZ TO, ZMIEN TEKST TAKZE W FUNKCJACH NIZEJ!!!
+			result = "Columns of compared DataFrame and postgresql table are not fully equal." #in case of changing this - got to change it also in functions below
 		else:
 			result = False #i think this is not necessary
 
@@ -414,7 +411,7 @@ class DBConnection():
 		else:
 			df_to_insert = df
 
-		#if df_to_insert is emptythen  return result
+		#if df_to_insert is empty then return result
 		if df_to_insert.shape[0] == 0:
 			return {'rows_inserted': rows_inserted, 'rows_updated': rows_updated}
 
@@ -431,7 +428,7 @@ class DBConnection():
 																   values_template)
 
 		# create values for query to insert
-		values = df_to_insert.values.tolist() # ZROBIC Z TEGO FUNKCJE MOZE
+		values = df_to_insert.values.tolist() # Make private function out of this and two rows below
 		values = tuple(itertools.chain.from_iterable(values))
 		values = [None if pd.isnull(x) else x for x in values]
 		# execute query and return result
